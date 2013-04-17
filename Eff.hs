@@ -3,6 +3,8 @@
              MultiParamTypeClasses, FlexibleInstances,
              PolyKinds, TypeFamilies, TypeOperators #-}
 
+import Control.Monad
+
 type family Res (e :: * -> *) :: *
 
 class Handler e m where
@@ -80,6 +82,11 @@ test = Node True (Node False Leaf Leaf) Leaf
 runTest :: Tree Int
 runTest = runPure (Cons 5 Nil) (tag test)
 
+type List = []
+
+map' :: (a -> EffM m es b) -> List a -> EffM m es (List b)
+map' f []     = return []
+map' f (a:as) = liftM2 (:) (f a) (map' f as)
 
 data Free f a where
   Pure   :: a -> Free f a
@@ -89,3 +96,4 @@ instance Functor f => Monad (Free f) where
   return         = Pure
   Pure   a >>= f = f a
   Impure x >>= f = Impure (fmap (>>=f) x)
+
