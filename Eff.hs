@@ -1,7 +1,8 @@
 
 {-# LANGUAGE DataKinds, KindSignatures, GADTs,
              MultiParamTypeClasses, FlexibleInstances,
-             PolyKinds, TypeFamilies, TypeOperators, RankNTypes #-}
+             PolyKinds, TypeFamilies, TypeOperators,
+             RankNTypes, FlexibleContexts #-}
 -- {-# OPTIONS_GHC
 --       -Wall -fno-warn-orphans
 --       -fno-warn-unused-matches          #-}
@@ -11,6 +12,7 @@ import Control.Monad
 -- import Control.Monad.Codensity
 -- import Control.Monad.Reader
 import qualified Control.Monad.State as MS
+import Control.Monad.Error
 import Control.Monad.Writer
 import Control.Monad.Coroutine
 
@@ -35,6 +37,9 @@ newtype Eff m es a = Eff { fromEff :: forall b. (a -> Env m es -> m b) -> Env m 
 instance Monad (Eff m es) where
   return a     = Eff $ \k -> k a
   Eff m >>= f  = Eff $ \k -> m (\a -> fromEff (f a) k)
+
+instance Functor (Eff m es) where
+  fmap f = (>>= return . f)
 
 new :: Handler e m -> Res e -> Eff m (e ': es) a -> Eff m es a
 new handle r (Eff eff) = Eff $ \k env -> eff (\v (Cons handle _ env') -> k v env') (Cons handle r env)
@@ -163,6 +168,50 @@ listChannel (Write s) k r = tell [s] >>= flip k r
 testListChannel = execWriter $
                   flip MS.evalStateT (repeat "hi") $
                   runEffM channelProg (Cons listChannel () Nil)
+
+data Bot
+botelim :: Bot -> a
+botelim bot = undefined
+
+-- Exceptions
+data Exception e :: * -> * where
+  Raise :: e -> Exception e Bot
+
+type instance Res (Exception e) = ()
+
+raise :: e -> Eff m '[Exception e] a
+raise e = fmap botelim $ mkEffectP Here (Raise e)
+
+optionalize :: Handler (Exception e) Maybe
+optionalize (Raise e) k r = Nothing
+
+exceptionProg :: Eff Maybe '[] Bool
+exceptionProg =
+  new optionalize () $
+    if 23 < 30
+     then raise "True"
+     else return False
+
+testException :: Maybe Bool
+testException = runEffM exceptionProg Nil
+
+exceptionHandler :: MonadError e m => Handler (Exception e) m
+exceptionHandler (Raise e) k r = throwError e
+
+exceptionProg2 :: MonadError String m => Eff m '[] Bool
+exceptionProg2 =
+  new exceptionHandler () $
+    if 23 < 30
+     then raise "True"
+     else return False
+
+testException2 :: Either String Bool
+testException2 = runEffM exceptionProg2 Nil
+
+catch :: MonadError e m => Eff m es a -> (e -> Eff m es a) -> Eff m es a
+catch prog handler = Eff $ \k env ->
+  undefined -- catchError (runEffM prog env) (\e -> runEffM (handler e) env)
+
 
 -- Cooperative multithreading
 
