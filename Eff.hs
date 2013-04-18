@@ -2,7 +2,8 @@
 {-# LANGUAGE DataKinds, KindSignatures, GADTs,
              MultiParamTypeClasses, FlexibleInstances,
              PolyKinds, TypeFamilies, TypeOperators,
-             RankNTypes, FlexibleContexts #-}
+             RankNTypes, FlexibleContexts, DeriveFunctor,
+             OverlappingInstances #-}
 -- {-# OPTIONS_GHC
 --       -Wall -fno-warn-orphans
 --       -fno-warn-unused-matches          #-}
@@ -13,7 +14,7 @@ import Control.Monad
 -- import Control.Monad.Reader
 import qualified Control.Monad.State as MS
 import Control.Monad.Error
-import Control.Monad.Writer
+import Control.Monad.Writer hiding (lift)
 import Control.Monad.Coroutine
 
 type family Res (e :: * -> *) :: *
@@ -27,6 +28,31 @@ data Elem :: k -> [k] -> * where
 data Env (m :: * -> *) :: [* -> *] -> * where
   Nil  :: Env m '[]
   Cons :: Handler e m -> Res e -> Env m es -> Env m (e ': es)
+
+data SubList :: [* -> *] -> [* -> *] -> * where
+  SubNil  :: SubList '[] '[]
+  SubKeep :: SubList es fs -> SubList (x ': es) (x ': fs)
+  SubDrop :: SubList es fs -> SubList es (x ': fs)
+
+class SubListC (es :: [* -> *]) (fs :: [* -> *]) where
+  subList :: SubList es fs
+
+instance SubListC '[] '[] where
+  subList = SubNil
+instance SubListC es fs => SubListC (x ': es) (x ': fs) where
+  subList = SubKeep subList
+instance SubListC es fs => SubListC es (x ': fs) where
+  subList = SubDrop subList
+
+dropEnv :: SubList es fs -> Env m fs -> Env m es
+dropEnv SubNil      Nil            = Nil
+dropEnv (SubKeep p) (Cons h r env) = Cons h r (dropEnv p env)
+dropEnv (SubDrop p) (Cons h r env) = dropEnv p env
+
+rebuildEnv :: SubList es fs -> Env m fs -> Env m es -> Env m fs
+rebuildEnv SubNil      Nil             Nil             = Nil
+rebuildEnv (SubKeep p) (Cons _ _ envf) (Cons h r enve) = Cons h r (rebuildEnv p envf enve)
+rebuildEnv (SubDrop p) (Cons h r envf) enve            = Cons h r (rebuildEnv p envf enve)
 
 execEff :: Elem e es -> e a -> (a -> Env m es -> m t) -> Env m es -> m t
 execEff Here      eff k (Cons handle res env) = handle eff (\v res' -> k v (Cons handle res' env)) res
@@ -46,6 +72,13 @@ new handle r (Eff eff) = Eff $ \k env -> eff (\v (Cons handle _ env') -> k v env
 
 mkEffectP :: Elem e es -> e a -> Eff m es a
 mkEffectP p e = Eff $ execEff p e
+
+liftP :: SubList es fs -> Eff m es a -> Eff m fs a
+liftP p (Eff f) = Eff $ \k envf ->
+  f (\v enve' -> k v (rebuildEnv p envf enve')) (dropEnv p envf)
+
+liftE :: SubListC es fs => Eff m es a -> Eff m fs a
+liftE = liftP subList
 
 runEff :: (a -> m a) -> Eff m es a -> Env m es -> m a
 runEff ret (Eff f) env = f (\v env' -> ret v) env
@@ -84,7 +117,7 @@ put :: s -> Eff m '[State s] ()
 put s = mkEffectP Here (Put s)
 
 data Tree a = Leaf | Node a (Tree a) (Tree a)
-  deriving Show
+  deriving (Show, Functor)
 
 tag :: Tree a -> Eff m '[State Int] (Tree Int)
 tag (Leaf)       = return Leaf
@@ -95,14 +128,14 @@ tag (Node _ l r) = do
                       r' <- tag r
                       return (Node n l' r')
 
-test :: Tree Bool
-test = Node True (Node False Leaf Leaf) Leaf
+testTree :: Tree Bool
+testTree = Node True (Node False Leaf Leaf) Leaf
 
 runTest :: Tree Int
-runTest = runPure (tag test) (Cons stateHandler 5 Nil)
+runTest = runPure (tag testTree) (Cons stateHandler 5 Nil)
 
 runTest2 :: Tree Int
-runTest2 = flip MS.evalState 4 $ runEffM (tag test) (Cons stateHandler2 5 Nil)
+runTest2 = flip MS.evalState 4 $ runEffM (tag testTree) (Cons stateHandler2 5 Nil)
 
 
 -- Non-deterministic choice
@@ -208,9 +241,9 @@ exceptionProg2 =
 testException2 :: Either String Bool
 testException2 = runEffM exceptionProg2 Nil
 
-catch :: MonadError e m => Eff m es a -> (e -> Eff m es a) -> Eff m es a
-catch prog handler = Eff $ \k env ->
-  undefined -- catchError (runEffM prog env) (\e -> runEffM (handler e) env)
+-- catch :: MonadError e m => Eff m es a -> (e -> Eff m es a) -> Eff m es a
+-- catch prog handler = Eff $ \k env ->
+--   catchError (runEffM prog env) (\e -> runEffM (handler e) env)
 
 
 -- Cooperative multithreading
@@ -233,6 +266,31 @@ catch prog handler = Eff $ \k env ->
 -- -- do
 --                     --   (t:ts) <- get
 --                     --   undefined
+
+
+-- Multiple effects
+
+tag' :: (a -> Eff m es b) -> Tree a -> Eff m es (Tree b)
+tag' f (Leaf)       = return Leaf
+tag' f (Node a l r) = do
+                        l' <- tag' f l
+                        b  <- f a
+                        r' <- tag' f r
+                        return (Node b l' r')
+
+myF :: String -> Eff m '[State Int, Channel] Int
+myF s = do
+             liftE (writeChannel s)
+             i <- liftE get
+             liftE (put (i + 1))
+             return i
+
+progChannelState :: Eff m '[Channel] (Tree Int)
+progChannelState = new stateHandler 5 $
+         tag' myF (fmap show testTree)
+
+testChannelState :: IO (Tree Int)
+testChannelState = runEffM (new ioChannel () progChannelState) Nil
 
 type List = []
 
