@@ -125,6 +125,12 @@ get = mkEffectP Here Get
 put :: s -> Eff m '[State s] r ()
 put s = mkEffectP Here (Put s)
 
+get' :: SubListC '[State s] es => Eff m es r s
+get' = liftE get
+
+put' :: SubListC '[State s] es => s -> Eff m es r ()
+put' s = liftE (put s)
+
 data Tree a = Leaf | Node a (Tree a) (Tree a)
   deriving (Show, Functor)
 
@@ -145,6 +151,44 @@ runTest = runPure (tag testTree) (Cons stateHandler 5 Nil)
 
 runTest2 :: Tree Int
 runTest2 = flip MS.evalState 4 $ runEffM (tag testTree) (Cons stateHandler2 5 Nil)
+
+-- Effect labeling
+
+
+data (:::) t (e :: * -> *) :: * -> * where
+  Apply :: e a -> (t ::: e) a
+
+type instance Res (t ::: e) = Res e
+
+name :: t -> e a -> (t ::: e) a
+name _ r = Apply r
+
+label :: t -> Env m (e ': es) -> Env m ((t ::: e) ': es)
+label _ (Cons handle r env) = Cons (\(Apply e) -> handle e) r env
+
+unlabel :: t -> Env m ((t ::: e) ': es) -> Env m (e ': es)
+unlabel t (Cons handle r env) = Cons (\e -> handle (name t e)) r env
+
+(-:) :: t -> Eff m '[e] r s -> Eff m '[t ::: e] r s
+t -: (Eff eff) = Eff $ \k lenv ->
+  eff (\v uenv' -> k v (label t uenv')) (unlabel t lenv)
+
+(--:) :: SubListC '[t ::: e] es => t -> Eff m '[e] r s -> Eff m es r s
+t --: eff = liftE (t -: eff)
+
+data Tag = Tag
+data Count = Count
+tagCount :: Tree a -> Eff m '[Count ::: State Int, Tag ::: State Int] r (Tree (Int, a))
+tagCount Leaf = do
+                  n <- Count --: get
+                  Count --: put (n+1 :: Int)
+                  return Leaf
+tagCount (Node x l r) = do
+                          l' <- tagCount l
+                          lbl <- Tag --: get
+                          Tag --: put (lbl + 1)
+                          r' <- tagCount r
+                          return $ Node (lbl, x) l' r'
 
 
 -- Non-deterministic choice
@@ -170,38 +214,6 @@ fruit = do
               fruit = if b then "apple" else "banana"
           return (form ++ " " ++ fruit)
 
-data (:::) t (e :: * -> *) :: * -> * where
-  Apply :: e a -> (t ::: e) a
-
-type instance Res (t ::: e) = Res e
-
-name :: t -> e a -> (t ::: e) a
-name _ r = Apply r
-
-label :: t -> Env m (e ': es) -> Env m ((t ::: e) ': es)
-label _ (Cons handle r env) = Cons (\(Apply e) -> handle e) r env
-
-unlabel :: t -> Env m ((t ::: e) ': es) -> Env m (e ': es)
-unlabel t (Cons handle r env) = Cons (\e -> handle (name t e)) r env
-
-(-:) :: t -> Eff m '[e] r s -> Eff m '[t ::: e] r s
-t -: (Eff eff) = Eff $ \k lenv ->
-  eff (\v uenv' -> k v (label t uenv')) (unlabel t lenv)
-
-data Tag = Tag
-data Count = Count
-tagCount :: Tree a -> Eff m '[Count ::: State Int, Tag ::: State Int] r (Tree (Int, a))
-tagCount Leaf = do
-                  n <- liftE (Count -: get)
-                  liftP (SubKeep subList) (Count -: put (n+1))
-                  return Leaf
-tagCount (Node x l r) = do
-                          l' <- tagCount l
-                          lbl <- liftE (Tag -: get)
-                          liftE (Tag -: put (lbl + 1))
-                          r' <- tagCount r
-                          return $ Node (lbl, x) l' r'
-
 testFruit1 = runEffM fruit (Cons allBool () Nil)
 testFruit2 = runPure fruit (Cons alwaysTrue () Nil)
 
@@ -217,6 +229,9 @@ readChannel = mkEffectP Here Read
 
 writeChannel :: String -> Eff m '[Channel] r ()
 writeChannel s = mkEffectP Here (Write s)
+
+writeChannel' :: SubListC '[Channel] es => String -> Eff m es r ()
+writeChannel' s = liftE (writeChannel s)
 
 ioChannel :: Handler Channel IO r
 ioChannel Read      k r = getLine    >>= flip k r
@@ -328,9 +343,9 @@ tag' f (Node a l r) = do
 
 myF :: String -> Eff m '[State Int, Channel] r Int
 myF s = do
-             liftE (writeChannel s)
-             i <- liftE get
-             liftE (put (i + 1))
+             writeChannel' s
+             i <- get'
+             put' (i + 1)
              return i
 
 progChannelState :: Eff m '[Channel] r (Tree Int)
