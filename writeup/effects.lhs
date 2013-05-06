@@ -33,7 +33,8 @@
              RankNTypes, FlexibleContexts, DeriveFunctor,
              OverlappingInstances #-}
 
-import qualified Data.Map  as M
+import qualified Data.Map as M
+import Data.Map (Map)
 
 import Control.Applicative
 import Control.Monad
@@ -109,12 +110,12 @@ simple effect-polymorphic counter described in \emph{MRI (FIXME
   full title?)}
 < tick :: StateM Int m => m ()
 < tick = get >>= put . (+1)
-Clearly calling $tick$, $n$ times is equivalent to adding $n$ to the current
-state, but how can we formalize this?
+Clearly calling $\mathit{tick}$, $n$ times is equivalent to adding $n$ to the
+current state, but how can we formalize this?
 
 \subsection{Reasoning about State}
 The behavior of a stateful computation can be captured by five easy
-laws~\cite{MRI} that all implementations of $\mathrm{StateM}$ satisfy.
+laws~\cite{MRI} that all implementations of $\mathit{StateM}$ satisfy.
 \begin{align*}
 get \gg m &\equiv m \tag{GetQuery} \\
 get \gg= \lambda s \rightarrow get \gg= f \; s &\equiv get \gg= \lambda s \rightarrow f \; s \; s \tag{GetGet} \\
@@ -157,9 +158,9 @@ and the induction case
 
 \section{Algebraic Effects in Haskell}
 % [✓] interface & types with example
-% [x] implementation without liftP
+% [ ] implementation without liftP
 %     (point out that for an interpreter you might not get a monad which
-%      is important for a monad)
+%      is important for reasoning)
 % [x] handler implementation
 % [x] another effect handler
 % [x] lifting with an added effect
@@ -173,20 +174,21 @@ computations are introduced as a monadic DSL with four primary operations
 > mkEffectP :: Elem e es -> e a -> Eff m es r a
 > new :: (forall a. Handler e m a) -> Res e
 >     -> Eff m (e : es) r a -> Eff m es r a
-where $return$ and $\bind$ have the obvious meanings, $mkEffectP$ invokes an
-effect currently in scope, and $new$ introduces a new effect in a computation.
+where $\mathit{return}$ and $\bind$ have the obvious meanings,
+$\mathit{mkEffectP}$ invokes an effect currently in scope, and $\mathit{new}$
+introduces a new effect in a computation.
 
 Notice that effectful computations of type $a$ returning a value of type $r$
-additionally specify in their signature $Eff \; m \; es \; r \; a$ an overall
-\emph{context} $m$ within which to run---this could be for example a monad---and
-the list of effects required $es$.
+additionally specify in their signature $\mathit{Eff} \; m \; es \; r \; a$ an
+overall \emph{context} $m$ within which to run---this could be for example a
+monad---and the list of effects required $es$.
 
-To exemplify the use of the above interface consider a stateful function to
+To exemplify the use of the effects interface consider a stateful function to
 compute the $n$th fibbonacci number using a table to lookup previously computed
 values.  Note the familiar monadic style enjoyed by programs written in the
 effects language.
 % FIXME {'[State (M.Map Int Int)] => [State (M.Map Int Int)]}
-> sfibs :: Int -> Eff m [State (M.Map Int Int)] r Int
+> sfibs :: Int -> Eff m [State (Map Int Int)] r Int
 > sfibs n | n < 2     = return 1
 > sfibs n | otherwise = do
 >   fibs <- get
@@ -197,29 +199,50 @@ effects language.
 >       b <- sfibs (n-2)
 >       get >>= put . M.insert n (a + b)
 >       return (a + b)
+Having declared the use of $\mathit{State}$, $\mathit{sfibs}$ is free to call
+any of $\mathit{State}$'s associated operations in the same way they would
+be called in the monadic $\mathit{State}$ setting.  If additional effects
+are required such as IO, they must simply be included in the effects list.
+As another example we might print a message when a new value in the
+$\mathit{fibs}$ sequence is computed.
+% FIXME {'[Channel, State (M.Map Int Int)] => [Channel, State (M.Map Int Int)]}
+> noisySFibs :: Int
+>            -> Eff m [Channel, State (M.Map Int Int)] r Int
+> noisySFibs n | n < 2 = return 1
+> noisySFibs n | otherwise = do
+>   writeChannel (show n)
+>   fibs <- get
+>   a <- case M.lookup (n-1) fibs of
+>          Just a  -> return a
+>          Nothing -> noisySFibs (n-1)
+>   fibs <- get
+>   b <- case M.lookup (n-2) fibs of
+>          Just b  -> return b
+>          Nothing -> noisySFibs (n-2)
+>   get >>= put . M.insert n (a + b)
+>   return (a + b)
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% TODO
-\subsection{More stuff}
-Additionally the DSL provides $liftP$ as a means for running
-computations that require only a subset of the effects currently in scope.
-
-Each effect manages a so called \emph{resource} which can simply be some state
-carried through each invocation.  Additionally with the introduction of an effect
-an associated \emph{handler} must be specified, providing the actual
-implementation of an effect's operations.
-
-The effects implementation begins with the introduction of effectful computations
+\subsection{Implementing Effects}
+The implementation of effects begins with the type of effectful computations
 > newtype Eff m es r a = Eff {
 >   fromEff ::
 >     (a -> Env m es -> m r) -> Env m es -> m r }
 Note that unlike Brady whose effects are evaluated by an interpreter, terms here
-are written in direct continuation passing style and it will later be seen that
-this simplifies the reasoning process.  Here an effectful computation is
+are written in direct continuation passing style.  
+
+and it will later be seen that
+this simplifies the reasoning process.
+
+Here an effectful computation is
 contextualized by an environment: $Env \; m \; es$.  The purpose of the
 environment is two-fold: it tracks the list of effects available to this
 computation; and it associates a handler with each effect in scope.  Thus the
 type of an environment should be expected to follow the shape of its value where
 each handler introduced pushes an associated effect onto the effect list.
+%Each effect manages a so called \emph{resource} which can simply be some state
+%carried through each invocation.  Additionally with the introduction of an effect
+%an associated \emph{handler} must be specified, providing the actual
+%implementation of an effect's operations.
 
 An environment can then be introduced as a list of handlers and their
 associated resources, decorated by the computational context and a list of
@@ -240,12 +263,12 @@ This is all the machinery required to implement the effects language.
 
 \subsection{Implementing the Effects Combinators}
 Referring back to the signature for an effect, the reader may expect for
-$Eff$ to form a monad.  Inspecting more closely, notice that $Eff$ is
-simply the composition of the $Codensity$ and $Reader$ monad transformers
-and thus trivially forms a monad itself.
+$\mathit{Eff}$ to form a monad.  Inspecting more closely, notice that
+$\mathit{Eff}$ is simply the composition of the $\mathit{Codensity}$ and
+$\mathit{Reader}$ monad transformers and thus trivially forms a monad itself.
 
 Introducing the first two operations exposed by the effects language,
-the definitions of $return$ and $bind$ can now be given as
+the definitions of $\mathit{return}$ and $\bind$ can now be given as
 > instance Monad (Eff m es r) where
 >   return a     = Eff $ \k -> k a
 >   Eff m >>= f  = Eff $ \k ->
@@ -265,11 +288,11 @@ object of the list membership type
 Respectively these cases can be taken to mean that either an element is a
 member because it is found at the top of a list; or if an element is a member
 of some list $es$ it is also a list of a superset of $es$.
-Equipped with the above $mkEffectP$ can be given
+Equipped with the above $\mathit{mkEffectP}$ can be given
 > mkEffectP :: Elem e es -> e a -> Eff m es r a
 > mkEffectP p e = Eff $ execEff p e
-where $execEff$ simply looks up and excutes the handler associated with the
-effect $e$ in the current environment.  By case analysis on $p$
+where $\mathit{execEff}$ simply looks up and excutes the handler associated
+with the effect $e$ in the current environment.  By case analysis on $p$
 > execEff :: Elem e es -> e a
 >         -> (a -> Env m es -> m t) -> Env m es -> m t
 > execEff Here      eff k (Cons handle res env) =
@@ -280,17 +303,18 @@ effect $e$ in the current environment.  By case analysis on $p$
 
 Given that to call an operation its effect must be in scope, a convenient
 method of introducing new effects should be available.  This is the purpose
-of $new$, which creates a new effect with its initial resource by wrapping
-a computation by a handler for its associated operations
+of $\mathit{new}$, which creates a new effect with its initial resource by
+wrapping a computation by a handler for its associated operations
 % FIXME {e ': es => e : es}
 > new :: (forall a. Handler e m a) -> Res e
 >     -> Eff m (e : es) r a -> Eff m es r a
 > new handle r (Eff eff) = Eff $ \k env ->
 >   eff (\v (Cons handle _ env') -> k v env')
 >       (Cons handle r env)
-First the computation $eff$ is run in an environment extended with the new effect
-type, following the newly introduced effect is dropped from the resulting
-environment, and the return value is passed into the remaining continuation.
+First the computation $\mathit{eff}$ is run in an environment extended with the
+new effect type, following the newly introduced effect is dropped from the
+resulting environment, and the return value is passed into the remaining
+continuation.
 
 \subsection{Examples}
 
