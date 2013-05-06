@@ -1,9 +1,14 @@
 \documentclass[preprint,cm,10pt]{sigplanconf}
+
 %include polycode.fmt
+%include forall.fmt
+
+%\usepackage{color}
+%\input{solarized.theme}
+%%include effects.fmt
 
 \usepackage{amsmath}
 \usepackage{amsmath}
-
 
 \title{Algebraic Reasoning over Algebraic Effects}
 \authorinfo{Steven Keuchel \and Tom Schrijvers}
@@ -17,7 +22,7 @@
 \bibliography{refs}
 \bibliographystyle{plain}
 
-\newcommand{ignore}{#1}{}
+\long\def\ignore#1{}
 
 \begin{document}
 \ignore{
@@ -151,27 +156,58 @@ and the induction case
 \end{align*}
 
 \section{Algebraic Effects in Haskell}
-\emph{TODO Introduce effects.}
+% [✓] interface & types with example
+% [x] implementation without liftP
+%     (point out that for an interpreter you might not get a monad which
+%      is important for a monad)
+% [x] handler implementation
+% [x] another effect handler
+% [x] lifting with an added effect
+% [x] handler implementation
+Following Brady's \emph{Idris} implementation~\cite{brady} effectful
+computations are introduced as a monadic DSL with four primary operations
+% FIXME {e ': es => e : es}
+> return :: a -> Eff m es r a
+> (>>=) :: Eff m es r a -> (a -> Eff m es r b)
+>       -> Eff m es r b
+> mkEffectP :: Elem e es -> e a -> Eff m es r a
+> new :: (forall a. Handler e m a) -> Res e
+>     -> Eff m (e : es) r a -> Eff m es r a
+where $return$ and $\bind$ have the obvious meanings, $mkEffectP$ invokes an
+effect currently in scope, and $new$ introduces a new effect in a computation.
 
-Following Brady's \emph{Idris} implementation~\cite{brady} effects are
-introduced as a DSL.  Effectful computations include in their signature
-the list of effects required and an overall \emph{context} within which
-to run---this could be for example a monad.  The framework exposes four
-primary operations
-\begin{itemize}
-\item $return$ to lift values into computations;
-\item $bind$ to bind a computation's result;
-\item $mkEffectP$ to invoke an effect currently in scope, and;
-\item $new$ to introduce a new effect to the current computation.
-\end{itemize}
+Notice that effectful computations of type $a$ returning a value of type $r$
+additionally specify in their signature $Eff \; m \; es \; r \; a$ an overall
+\emph{context} $m$ within which to run---this could be for example a monad---and
+the list of effects required $es$.
+
+To exemplify the use of the above interface consider a stateful function to
+compute the $n$th fibbonacci number using a table to lookup previously computed
+values.  Note the familiar monadic style enjoyed by programs written in the
+effects language.
+% FIXME {'[State (M.Map Int Int)] => [State (M.Map Int Int)]}
+> sfibs :: Int -> Eff m [State (M.Map Int Int)] r Int
+> sfibs n | n < 2     = return 1
+> sfibs n | otherwise = do
+>   fibs <- get
+>   case M.lookup n fibs of
+>     Just c  -> return c
+>     Nothing -> do
+>       a <- sfibs (n-1)
+>       b <- sfibs (n-2)
+>       get >>= put . M.insert n (a + b)
+>       return (a + b)
+What does the implementation of an effect look like?
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% TODO
+\subsection{More stuff}
 Additionally the DSL provides $liftP$ as a means for running
 computations that require only a subset of the effects currently in scope.
 
 Each effect manages a so called \emph{resource} which can simply be some state
 carried through each invocation.  Additionally with the introduction of an effect
 an associated \emph{handler} must be specified, providing the actual
-implementation
-of an effect's operations.
+implementation of an effect's operations.
 
 The effects implementation begins with the introduction of effectful computations
 > newtype Eff m es r a = Eff {
@@ -189,11 +225,14 @@ each handler introduced pushes an associated effect onto the effect list.
 An environment can then be introduced as a list of handlers and their
 associated resources, decorated by the computational context and a list of
 effects in scope.
+% FIXME {'[] => []} {e ': es => e : es}
 > data Env (m :: * -> *) :: [* -> *] -> * where
->   Nil  :: Env m '[]
->   Cons :: (forall a. Handler e m a) -> Res e -> Env m es -> Env m (e ': es)
+>   Nil  :: Env m []
+>   Cons :: (forall a. Handler e m a) -> Res e
+>     -> Env m es -> Env m (e : es)
 Where the type of a handler is
-> type Handler e m a = forall t. e t -> (t -> Res e -> m a) -> Res e -> m a
+> type Handler e m a =
+>   forall t. e t -> (t -> Res e -> m a) -> Res e -> m a
 Thus a handler maps effects of type $e \; t$ given a continuation that takes a
 result and an updated resource; and the current value of this effect's
 associated resource.
@@ -210,7 +249,8 @@ Introducing the first two operations exposed by the effects language,
 the definitions of $return$ and $bind$ can now be given as
 > instance Monad (Eff m es r) where
 >   return a     = Eff $ \k -> k a
->   Eff m >>= f  = Eff $ \k -> m (\a -> fromEff (f a) k)
+>   Eff m >>= f  = Eff $ \k ->
+>     m (\a -> fromEff (f a) k)
 Here $return$ simply yields its value to the rest of the computation.
 To implement $bind$ the result of an effectful computation $m$ is passed
 into $f$ and the the resulting computation is run.
@@ -219,9 +259,10 @@ Recall that the fixed set of operations exposed by an effect are invoked
 by $mkEffectP$, meaning to execute an operation the computation is obliged
 to prove the associated effect is in scope.  Such a proof can be given as an
 object of the list membership type
+% FIXME {e ': es => e : es} {e' ': es => e' : es}
 > data Elem e es where
->   Here  :: Elem e (e ': es)
->   There :: Elem e es -> Elem e (e' ': es)
+>   Here  :: Elem e (e : es)
+>   There :: Elem e es -> Elem e (e' : es)
 Respectively these cases can be taken to mean that either an element is a
 member because it is found at the top of a list; or if an element is a member
 of some list $es$ it is also a list of a superset of $es$.
@@ -230,40 +271,29 @@ Equipped with the above $mkEffectP$ can be given
 > mkEffectP p e = Eff $ execEff p e
 where $execEff$ simply looks up and excutes the handler associated with the
 effect $e$ in the current environment.  By case analysis on $p$
-> execEff :: Elem e es -> e a -> (a -> Env m es -> m t) -> Env m es -> m t
+> execEff :: Elem e es -> e a
+>         -> (a -> Env m es -> m t) -> Env m es -> m t
 > execEff Here      eff k (Cons handle res env) =
 >   handle eff (\v res' -> k v (Cons handle res' env)) res
 > execEff (There i) eff k (Cons handle res env) =
->   execEff i eff (\v env' -> k v (Cons handle res env')) env
+>   execEff i eff
+>           (\v env' -> k v (Cons handle res env')) env
 
 Given that to call an operation its effect must be in scope, a convenient
 method of introducing new effects should be available.  This is the purpose
 of $new$, which creates a new effect with its initial resource by wrapping
 a computation by a handler for its associated operations
-> new :: (forall a. Handler e m a) -> Res e -> Eff m (e ': es) r a -> Eff m es r a
+% FIXME {e ': es => e : es}
+> new :: (forall a. Handler e m a) -> Res e
+>     -> Eff m (e : es) r a -> Eff m es r a
 > new handle r (Eff eff) = Eff $ \k env ->
->   eff (\v (Cons handle _ env') -> k v env') (Cons handle r env)
+>   eff (\v (Cons handle _ env') -> k v env')
+>       (Cons handle r env)
 First the computation $eff$ is run in an environment extended with the new effect
 type, following the newly introduced effect is dropped from the resulting
 environment, and the return value is passed into the remaining continuation.
 
 \subsection{Examples}
-The above operations are enough to begin writing useful programs with effects.
-As a simple example consider a stateful function to compute the $n$th
-fibbonacci number, using a table to lookup previously computed values.
-Note the regular monadic style enjoyed by effectful computations.
-> sfibs :: Int -> Eff m '[State (M.Map Int Int)] r Int
-> sfibs 0 = return 1
-> sfibs 1 = return 1
-> sfibs n = do
->   fibs <- get
->   case M.lookup n fibs of
->     Just c  -> return c
->     Nothing -> do a <- sfibs (n-1)
->                   b <- sfibs (n-2)
->                   get >>= put . M.insert n (a + b)
->                   return (a + b)
-What does the implementation of an effect look like?
 
 \subsection{Combining Effectful Computations}
 

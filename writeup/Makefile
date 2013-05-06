@@ -1,13 +1,16 @@
 N=effects
 
-#all: $N.pdf
 all: $N.dvi
+pdf: $N.pdf
 
 clean:
 	rm -rf generated/
 
 distclean: clean
 	rm -f $N.pdf $N.ps $N.dvi
+
+#%.fmt: %.lhs
+#	lhs2TeX-hl -o $@ $<
 
 %.tex: %.lhs
 	@mkdir -p generated
@@ -27,4 +30,4 @@ distclean: clean
 	pdflatex -output-dir=generated generated/$<
 	cp generated/$(basename $<).pdf $(basename $<).pdf
 
-.PHONY: all clean distclean
+.PHONY: all pdf clean distclean
