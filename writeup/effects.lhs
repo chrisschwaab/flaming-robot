@@ -174,19 +174,18 @@ computations are introduced as a monadic DSL with four primary operations
 > mkEffectP :: Elem e es -> e a -> Eff m es r a
 > new :: (forall a. Handler e m a) -> Res e
 >     -> Eff m (e : es) r a -> Eff m es r a
-where $\mathit{return}$ and $\bind$ have the obvious meanings,
-$\mathit{mkEffectP}$ invokes an effect currently in scope, and $\mathit{new}$
-introduces a new effect in a computation.
+where |return| and |>>=| have the obvious meanings, |mkEffectP| invokes an
+effect currently in scope, and |new| introduces a new effect in a computation.
 
-Notice that effectful computations of type $a$ returning a value of type $r$
-additionally specify in their signature $\mathit{Eff} \; m \; es \; r \; a$ an
-overall \emph{context} $m$ within which to run---this could be for example a
-monad---and the list of effects required $es$.
+Notice that effectful computations of type |a| returning a value of type |r|
+additionally specify in their signature |Eff m es r a| an overall
+\emph{context} |m| within which to run---this could be for example a
+monad---and the list of effects required |es|.
 
 To exemplify the use of the effects interface consider a stateful function to
-compute the $n$th fibbonacci number using a table to lookup previously computed
-values.  Note the familiar monadic style enjoyed by programs written in the
-effects language.
+compute the $n^{th}$ fibbonacci number using a table to lookup previously
+computed values.  Note the familiar monadic style enjoyed by programs written
+in the effects language.
 % FIXME {'[State (M.Map Int Int)] => [State (M.Map Int Int)]}
 > sfibs :: Int -> Eff m [State (Map Int Int)] r Int
 > sfibs n | n < 2     = return 1
@@ -199,9 +198,9 @@ effects language.
 >       b <- sfibs (n-2)
 >       get >>= put . M.insert n (a + b)
 >       return (a + b)
-Having declared the use of $\mathit{State}$, $\mathit{sfibs}$ is free to call
-any of $\mathit{State}$'s associated operations in the same way they would
-be called in the monadic $\mathit{State}$ setting.  If additional effects
+Having declared the use of |State|, |sfibs| is free to call
+any of |State|'s associated operations in the same way they would
+be called in the monadic |State| setting.  If additional effects
 are required such as IO, they must simply be included in the effects list.
 As another example we might print a message when a new value in the
 $\mathit{fibs}$ sequence is computed.
@@ -234,7 +233,7 @@ and it will later be seen that
 this simplifies the reasoning process.
 
 Here an effectful computation is
-contextualized by an environment: $Env \; m \; es$.  The purpose of the
+contextualized by an environment: |Env m es|.  The purpose of the
 environment is two-fold: it tracks the list of effects available to this
 computation; and it associates a handler with each effect in scope.  Thus the
 type of an environment should be expected to follow the shape of its value where
@@ -262,23 +261,23 @@ associated resource.
 This is all the machinery required to implement the effects language.
 
 \subsection{Implementing the Effects Combinators}
-Referring back to the signature for an effect, the reader may expect for
-$\mathit{Eff}$ to form a monad.  Inspecting more closely, notice that
-$\mathit{Eff}$ is simply the composition of the $\mathit{Codensity}$ and
-$\mathit{Reader}$ monad transformers and thus trivially forms a monad itself.
+Referring back to the signature for an effect, the reader may expect for |Eff|
+to form a monad.  Inspecting more closely, notice that |Eff| is simply the
+composition of the |Codensity| and |Reader| monad transformers and thus
+trivially forms a monad itself.
 
-Introducing the first two operations exposed by the effects language,
-the definitions of $\mathit{return}$ and $\bind$ can now be given as
+Introducing the first two operations exposed by the effects language, the
+definitions of |return| and |>>=| can now be given as
 > instance Monad (Eff m es r) where
 >   return a     = Eff $ \k -> k a
 >   Eff m >>= f  = Eff $ \k ->
 >     m (\a -> fromEff (f a) k)
-Here $return$ simply yields its value to the rest of the computation.
-To implement $bind$ the result of an effectful computation $m$ is passed
-into $f$ and the the resulting computation is run.
+Here |return| simply yields its value to the rest of the computation. To
+implement |>>=| the result of an effectful computation |m| is passed into |f|
+and the the resulting computation is run.
 
 Recall that the fixed set of operations exposed by an effect are invoked
-by $mkEffectP$, meaning to execute an operation the computation is obliged
+by |mkEffectP|, meaning to execute an operation the computation is obliged
 to prove the associated effect is in scope.  Such a proof can be given as an
 object of the list membership type
 % FIXME {e ': es => e : es} {e' ': es => e' : es}
@@ -287,12 +286,12 @@ object of the list membership type
 >   There :: Elem e es -> Elem e (e' : es)
 Respectively these cases can be taken to mean that either an element is a
 member because it is found at the top of a list; or if an element is a member
-of some list $es$ it is also a list of a superset of $es$.
-Equipped with the above $\mathit{mkEffectP}$ can be given
+of some list |es| it is also a list of a superset of |es|. Equipped with the
+above |mkEffectP| can be given
 > mkEffectP :: Elem e es -> e a -> Eff m es r a
 > mkEffectP p e = Eff $ execEff p e
-where $\mathit{execEff}$ simply looks up and excutes the handler associated
-with the effect $e$ in the current environment.  By case analysis on $p$
+where |execEff| simply looks up and excutes the handler associated with the
+effect |e| in the current environment.  By case analysis on |p|
 > execEff :: Elem e es -> e a
 >         -> (a -> Env m es -> m t) -> Env m es -> m t
 > execEff Here      eff k (Cons handle res env) =
@@ -301,20 +300,19 @@ with the effect $e$ in the current environment.  By case analysis on $p$
 >   execEff i eff
 >           (\v env' -> k v (Cons handle res env')) env
 
-Given that to call an operation its effect must be in scope, a convenient
-method of introducing new effects should be available.  This is the purpose
-of $\mathit{new}$, which creates a new effect with its initial resource by
-wrapping a computation by a handler for its associated operations
+Given that to call an operation its effect must be in scope, a convenient method
+of introducing new effects should be available.  This is the purpose of |new|,
+which creates a new effect with its initial resource by wrapping a computation
+by a handler for its associated operations
 % FIXME {e ': es => e : es}
 > new :: (forall a. Handler e m a) -> Res e
 >     -> Eff m (e : es) r a -> Eff m es r a
 > new handle r (Eff eff) = Eff $ \k env ->
 >   eff (\v (Cons handle _ env') -> k v env')
 >       (Cons handle r env)
-First the computation $\mathit{eff}$ is run in an environment extended with the
-new effect type, following the newly introduced effect is dropped from the
-resulting environment, and the return value is passed into the remaining
-continuation.
+First the computation |eff| is run in an environment extended with the new
+effect type, following the newly introduced effect is dropped from the resulting
+environment, and the return value is passed into the remaining continuation.
 
 \subsection{Examples}
 
