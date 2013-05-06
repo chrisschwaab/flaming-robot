@@ -8,6 +8,7 @@
 --       -Wall -fno-warn-orphans
 --       -fno-warn-unused-matches          #-}
 
+import qualified Data.Map  as M
 import Control.Applicative
 import Control.Monad
 -- import Control.Monad.Codensity
@@ -64,7 +65,8 @@ rebuildEnv (SubKeep p) (Cons _ _ envf) (Cons h r enve) = Cons h r (rebuildEnv p 
 rebuildEnv (SubDrop p) (Cons h r envf) enve            = Cons h r (rebuildEnv p envf enve)
 
 execEff :: Elem e es -> e a -> (a -> Env m es -> m t) -> Env m es -> m t
-execEff Here      eff k (Cons handle res env) = handle eff (\v res' -> k v (Cons handle res' env)) res
+execEff Here      eff k (Cons handle res env) =
+    handle eff (\v res' -> k v (Cons handle res' env)) res
 execEff (There i) eff k (Cons handle res env) = execEff i eff (\v env' -> k v (Cons handle res env')) env
 
 newtype Eff m es r a = Eff { fromEff :: (a -> Env m es -> m r) -> Env m es -> m r }
@@ -369,3 +371,34 @@ instance Functor f => Monad (Free f) where
   return         = Pure
   Pure   a >>= f = f a
   Impure x >>= f = Impure (fmap (>>=f) x)
+
+noisyFibs :: Int -> Eff m '[Channel] r Int
+noisyFibs 0 = writeChannel (show 1) >> return 1
+noisyFibs 1 = writeChannel (show 1) >> return 1
+noisyFibs n = do
+  writeChannel (show n)
+  a <- noisyFibs (n-1)
+  b <- noisyFibs (n-2)
+  return (a + b)
+
+noisySFibs :: Int -> Eff m '[Channel, State (M.Map Int Int)] r Int
+noisySFibs 0 = return 1
+noisySFibs 1 = return 1
+noisySFibs n = do
+  writeChannel' (show n)
+  fibs <- get'
+  a <- case M.lookup (n-1) fibs of
+         Just a  -> return a
+         Nothing -> noisySFibs (n-1)
+  fibs <- get'
+  b <- case M.lookup (n-2) fibs of
+         Just b  -> return b
+         Nothing -> noisySFibs (n-2)
+  get' >>= put' . M.insert n (a + b)
+  return (a + b)
+
+testNoisyFibs = flip runEffM Nil . new ioChannel () . noisyFibs
+testNoisySFibs n = flip runEffM Nil $
+                     new stateHandler M.empty $
+                     new ioChannel () $
+                       noisySFibs n
