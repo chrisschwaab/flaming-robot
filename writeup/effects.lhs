@@ -197,7 +197,6 @@ effects language.
 >       b <- sfibs (n-2)
 >       get >>= put . M.insert n (a + b)
 >       return (a + b)
-What does the implementation of an effect look like?
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% TODO
 \subsection{More stuff}
