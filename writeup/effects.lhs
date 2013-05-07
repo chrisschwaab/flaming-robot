@@ -11,12 +11,12 @@
 \usepackage{amsmath}
 
 \title{Algebraic Reasoning over Algebraic Effects}
-\authorinfo{Steven Keuchel \and Tom Schrijvers}
-           {University of Ghent}
-           {\{steven.keuchel,tom.schrijvers\}@ugent.be}
 \authorinfo{Christopher Schwaab}
            {}
-           {christopher.schwaab@gmail.com}
+           {christopher.schwaab@@gmail.com}
+\authorinfo{Steven Keuchel \and Tom Schrijvers}
+           {University of Ghent}
+           {\{steven.keuchel,tom.schrijvers\}@@ugent.be}
 \date{}
 
 \bibliography{refs}
