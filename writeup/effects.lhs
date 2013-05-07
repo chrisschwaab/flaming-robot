@@ -8,7 +8,7 @@
 %%include effects.fmt
 
 \usepackage{amsmath}
-\usepackage{amsmath}
+\usepackage{xcolor}
 
 \title{Algebraic Reasoning over Algebraic Effects}
 \authorinfo{Christopher Schwaab}
@@ -23,6 +23,8 @@
 \bibliographystyle{plain}
 
 \long\def\ignore#1{}
+
+\newcommand{\tom}[1]{\textcolor{red}{[\textsc{Tom:}}#1\textcolor{red}{]}}
 
 \begin{document}
 \ignore{
@@ -156,6 +158,7 @@ and the induction case
   ...
 \end{align*}
 
+%===============================================================================
 \section{Algebraic Effects in Haskell}
 % [✓] interface & types with example
 % [ ] implementation without liftP
@@ -165,27 +168,38 @@ and the induction case
 % [x] another effect handler
 % [x] lifting with an added effect
 % [x] handler implementation
-Following Brady's \emph{Idris} implementation~\cite{brady} effectful
-computations are introduced as a monadic DSL with four primary operations
+
+
+%-------------------------------------------------------------------------------
+\subsection{The User's Perspective}
+
+Our approach to algebraic effects is based on Brady's implementation of
+algebraic effects~\cite{brady} in \emph{Idris}.  We provide the user with a
+\emph{monadic} DSL for writing effectful computations.  The type of an
+effectful computation is |Eff m es r a|, where the four type parameters are as
+follows:
+\begin{itemize}
+\item |a| is the type of the immediate (or intermediate) value produced by the computation,
+\item |r| is the type of the eventual value produce by the overall computation, and
+\item |es| is the type-level list of effects that can be used in the computation, and
+\item |m| is the \emph{context} within which the overall computation is run.
+\end{itemize}
 % FIXME {e ': es => e : es}
-> return :: a -> Eff m es r a
-> (>>=) :: Eff m es r a -> (a -> Eff m es r b)
->       -> Eff m es r b
-> mkEffectP :: Elem e es -> e a -> Eff m es r a
-> new :: (forall a. Handler e m a) -> Res e
->     -> Eff m (e : es) r a -> Eff m es r a
-where |return| and |>>=| have the obvious meanings, |mkEffectP| invokes an
-effect currently in scope, and |new| introduces a new effect in a computation.
 
-Notice that effectful computations of type |a| returning a value of type |r|
-additionally specify in their signature |Eff m es r a| an overall
-\emph{context} |m| within which to run---this could be for example a
-monad---and the list of effects required |es|.
+Programming with the |Eff| DSL quite closely resembles the traditional approach
+to programming with monadic effects.  Indeed, as |Eff m es r| is a monad, it is
+equipped with |return| and |>>=| for injecting pure values in the computation
+and sequentially composing computations.
 
-To exemplify the use of the effects interface consider a stateful function to
-compute the $n^{th}$ fibbonacci number using a table to lookup previously
-computed values.  Note the familiar monadic style enjoyed by programs written
-in the effects language.
+< return     ::  a -> Eff m es r a
+< (>>=)      ::  Eff m es r a -> (a -> Eff m es r b) 
+<            ->  Eff m es r b
+
+In addition, various effects |e| may provide their own primitive operations to
+extend the DSL's capabilities. For instance, the |State| effect may offers primitives
+|get| and |put|. This means that, apart from its type, the definition of the memoized 
+fibonacci function |sfibs| looks no different than if it were written against
+the |State| monad.
 % FIXME {'[State (M.Map Int Int)] => [State (M.Map Int Int)]}
 > sfibs :: Int -> Eff m [State (Map Int Int)] r Int
 > sfibs n | n < 2     = return 1
@@ -198,12 +212,16 @@ in the effects language.
 >       b <- sfibs (n-2)
 >       get >>= put . M.insert n (a + b)
 >       return (a + b)
-Having declared the use of |State|, |sfibs| is free to call
+By declaring the |State| effect in its list of effects, |sfibs| is free to call
 any of |State|'s associated operations in the same way they would
-be called in the monadic |State| setting.  If additional effects
-are required such as IO, they must simply be included in the effects list.
-As another example we might print a message when a new value in the
-$\mathit{fibs}$ sequence is computed.
+be called in the monadic |State| setting.  
+
+\tom{This would be a good place to show how a user can run an effectful computation.
+     Only provide signatures and show a top-level expression with result.}
+
+If additional effects are required such as IO, they must simply be included in
+the effects list. For instance, this variant of |sfibs| prints a message
+whenever a new value in the sequence has been computed.
 % FIXME {'[Channel, State (M.Map Int Int)] => [Channel, State (M.Map Int Int)]}
 > noisySFibs :: Int
 >            -> Eff m [Channel, State (M.Map Int Int)] r Int
@@ -221,6 +239,34 @@ $\mathit{fibs}$ sequence is computed.
 >   get >>= put . M.insert n (a + b)
 >   return (a + b)
 
+To do so, it declares the |Channel| effect in addition to the |State| effect,
+and invokes the |Channel| operation |writeChannel|.
+
+\tom{We need to find a good spot for these. This subsection is too early to introduce |mkEffectP|.}
+In addition to those two operations, it provides two more primitive operations.
+The function |mkEffectP| invokes an effect |e| computation |e a| into the current computation
+effect currently in scope, and |new| introduces a new effect in a computation.
+
+\begin{itemize}
+\item
+|mkEffectP| invokes an
+effect currently in scope.
+
+< mkEffectP  :: Elem e es -> e a -> Eff m es r a
+
+\item  |new| introduces a new effect in a computation.
+
+< new        :: (forall a. Handler e m a) -> Res e
+<            -> Eff m (e : es) r a -> Eff m es r a
+
+\end{itemize}
+
+% Notice that effectful computations of type |a| returning a value of type |r|
+% additionally specify in their signature |Eff m es r a| an overall
+% \emph{context} |m| within which to run------and the list of effects required |es|.
+
+
+%-------------------------------------------------------------------------------
 \subsection{Implementing Effects}
 The implementation of effects begins with the type of effectful computations
 > newtype Eff m es r a = Eff {
