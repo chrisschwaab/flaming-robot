@@ -10,7 +10,8 @@
 \usepackage{amsmath}
 \usepackage{xcolor}
 
-\title{Algebraic Reasoning over Algebraic Effects}
+\title{Just Handle It: \\
+Algebraic Reasoning over Algebraic Effects}
 \authorinfo{Christopher Schwaab}
            {}
            {christopher.schwaab@@gmail.com}
